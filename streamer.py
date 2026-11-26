@@ -569,6 +569,9 @@ class Capture:
         enc = s.get("encoder", "libx264")
         if enc == "libx264":
             cmd += ["-c:v", "libx264", "-preset", "veryfast"]
+        elif enc == "h264_nvenc":
+            cmd += ["-c:v", "h264_nvenc", "-preset", "p5", "-tune", "hq", "-rc", "cbr",
+                    "-bf", "2", "-profile:v", "high"]
         else:
             cmd += ["-c:v", enc]
         cmd += ["-b:v", f"{br}k", "-maxrate", f"{br}k", "-bufsize", f"{br * 2}k",
@@ -583,6 +586,16 @@ class Capture:
         return cmd
 
     def start(self):
+        try:
+            self._start()
+        except RuntimeError:
+            if self.s.get("encoder", "libx264") == "libx264":
+                raise
+            log(f"encoder {self.s.get('encoder')} failed, trying libx264")
+            self.s = dict(self.s, encoder="libx264")
+            self._start()
+
+    def _start(self):
         src_id = (self.s.get("video_source") or {}).get("id", "screen:default")
         if src_id.startswith("window:"):
             modes = ["gfxcapture"]
