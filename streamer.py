@@ -44,6 +44,7 @@ DEFAULT_SETTINGS = {
     "capture": "ddagrab",
     "monitor": 0,
     "capture_audio": True,
+    "hdr_mode": "auto",
     "video_source": {"id": "screen:default", "label": "Main screen (default)"},
     "audio_source": {"id": "default", "label": "Computer sound (default speakers)"},
     "copy_link_on_start": True,
@@ -255,6 +256,78 @@ def resolve_monitor(device):
     raise RuntimeError(f"The screen {device} is not connected. Select another source.")
 
 
+def hdr_info():
+    """{'\\\\.\\DISPLAY1': {'hdr': True, 'white_nits': 240.0}, ...} from the Windows display configuration."""
+    import ctypes
+    from ctypes import wintypes as wt
+
+    class LUID(ctypes.Structure):
+        _fields_ = [("LowPart", wt.DWORD), ("HighPart", ctypes.c_long)]
+
+    class PATH(ctypes.Structure):
+        _fields_ = [("src_adapter", LUID), ("src_id", ctypes.c_uint32), ("src_mode", ctypes.c_uint32),
+                    ("src_flags", ctypes.c_uint32), ("tgt_adapter", LUID), ("tgt_id", ctypes.c_uint32),
+                    ("rest", ctypes.c_uint32 * 9), ("flags", ctypes.c_uint32)]
+
+    class MODE(ctypes.Structure):
+        _fields_ = [("raw", ctypes.c_byte * 64)]
+
+    class HEADER(ctypes.Structure):
+        _fields_ = [("type", ctypes.c_uint32), ("size", ctypes.c_uint32), ("adapter", LUID), ("id", ctypes.c_uint32)]
+
+    class SRCNAME(ctypes.Structure):
+        _fields_ = [("h", HEADER), ("name", wt.WCHAR * 32)]
+
+    class COLOR(ctypes.Structure):
+        _fields_ = [("h", HEADER), ("value", ctypes.c_uint32), ("enc", ctypes.c_uint32), ("bits", ctypes.c_uint32)]
+
+    class WHITE(ctypes.Structure):
+        _fields_ = [("h", HEADER), ("level", ctypes.c_ulong)]
+
+    u = ctypes.windll.user32
+    np_, nm = ctypes.c_uint32(), ctypes.c_uint32()
+    if u.GetDisplayConfigBufferSizes(2, ctypes.byref(np_), ctypes.byref(nm)):
+        return {}
+    paths = (PATH * np_.value)()
+    modes = (MODE * nm.value)()
+    if u.QueryDisplayConfig(2, ctypes.byref(np_), paths, ctypes.byref(nm), modes, None):
+        return {}
+    out = {}
+    for p in paths[: np_.value]:
+        sn = SRCNAME()
+        sn.h = HEADER(1, ctypes.sizeof(SRCNAME), p.src_adapter, p.src_id)
+        if u.DisplayConfigGetDeviceInfo(ctypes.byref(sn)):
+            continue
+        ci = COLOR()
+        ci.h = HEADER(9, ctypes.sizeof(COLOR), p.tgt_adapter, p.tgt_id)
+        hdr = not u.DisplayConfigGetDeviceInfo(ctypes.byref(ci)) and bool(ci.value & 2)
+        wl = WHITE()
+        wl.h = HEADER(11, ctypes.sizeof(WHITE), p.tgt_adapter, p.tgt_id)
+        white = wl.level / 1000 * 80 if not u.DisplayConfigGetDeviceInfo(ctypes.byref(wl)) and wl.level else 80.0
+        out[sn.name] = {"hdr": hdr, "white_nits": round(white, 1)}
+    return out
+
+
+def monitor_of_window(hwnd):
+    import ctypes
+    hmon = ctypes.windll.user32.MonitorFromWindow(hwnd, 2)  # MONITOR_DEFAULTTONEAREST
+    for m in list_screens():
+        if m["hmonitor"] == hmon:
+            return m
+    return None
+
+
+HDR_HOOK = """//!HOOK MAIN
+//!BIND HOOKED
+//!DESC Windows HDR desktop (scRGB, linear) to SDR sRGB
+vec4 hook() {
+    vec4 c = HOOKED_texOff(0);
+    vec3 x = clamp(c.rgb * %.6f, 0.0, 1.0);
+    vec3 s = mix(x * 12.92, 1.055 * pow(x, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, x));
+    return vec4(s, 1.0);
+}
+"""
+
 # --------------------------------------------------------------------------- audio
 class LoopbackAudio:
     """Captures what the speakers play (WASAPI loopback) and feeds a steady PCM stream.
@@ -376,7 +449,19 @@ class Capture:
         fps = int(s["framerate"])
         br = int(s["video_bitrate_kbps"])
         cmd = [find_ffmpeg(), "-hide_banner", "-loglevel", "warning", "-y"]
-        if capture_mode == "gfxcapture":
+        hdr = capture_mode == "hdr"
+        if hdr:
+            target, white = self.hdr_target
+            with open(os.path.join(LOG_DIR, "hdr.hook"), "w", encoding="ascii") as f:
+                f.write(HDR_HOOK % (80.0 / white))
+            cmd += ["-init_hw_device", "vulkan", "-f", "lavfi", "-i",
+                    f"gfxcapture={target}:output_fmt=16bit:max_framerate={fps}:capture_cursor=1"]
+            vf = ("hwdownload,format=rgbaf16le,"
+                  "setparams=color_primaries=bt709:color_trc=linear:colorspace=gbr:range=pc,"
+                  f"libplacebo=w=-2:h='min({int(s['max_height'])},trunc(ih/2)*2)':format=yuv420p:"
+                  "colorspace=bt709:color_primaries=bt709:color_trc=linear:range=tv:"
+                  "custom_shader_path=hdr.hook,setparams=color_trc=bt709")
+        elif capture_mode == "gfxcapture":
             src = s.get("video_source") or {}
             if src.get("id", "").startswith("window:"):
                 target = f"hwnd={resolve_window(src)}:resize_mode=scale_aspect"
@@ -396,7 +481,8 @@ class Capture:
                     "-ac", str(self.audio.channels), "-i", "pipe:0"]
         else:
             cmd += ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"]
-        vf += f"scale=-2:'min({int(s['max_height'])},trunc(ih/2)*2)':flags=bicubic,format=yuv420p"
+        if not hdr:
+            vf += f"scale=-2:'min({int(s['max_height'])},trunc(ih/2)*2)':flags=bicubic,format=yuv420p"
         cmd += ["-map", "0:v", "-map", "1:a", "-vf", vf]
         enc = s.get("encoder", "libx264")
         if enc == "libx264":
@@ -425,6 +511,14 @@ class Capture:
             if modes[0] != "gdigrab":
                 modes.append("gdigrab")
         audio_id = (self.s.get("audio_source") or {}).get("id", "default")
+        self.hdr_target = None
+        if self.s.get("hdr_mode", "auto") == "auto":
+            try:
+                self.hdr_target = self._hdr_target(src_id)
+            except Exception as e:
+                log("HDR check failed:", e)
+            if self.hdr_target:
+                modes.insert(0, "hdr")
         last_err = ""
         for mode in modes:
             self.audio = None
@@ -446,7 +540,7 @@ class Capture:
             self.logfile.flush()
             self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE if self.audio else subprocess.DEVNULL,
                                          stdout=subprocess.DEVNULL, stderr=self.logfile,
-                                         creationflags=NO_WINDOW)
+                                         creationflags=NO_WINDOW, cwd=LOG_DIR)
             if self.audio:
                 self.audio.start(self.proc.stdin)
             self.started = time.monotonic()
@@ -461,6 +555,28 @@ class Capture:
             log(f"capture mode {mode} failed (exit {self.proc.returncode}): {last_err}")
             self.stop()
         raise RuntimeError("Screen capture failed: " + last_err)
+
+    def _hdr_target(self, src_id):
+        """(gfxcapture target, SDR white nits) when the captured screen has Windows HDR on, else None."""
+        info = hdr_info()
+        src = self.s.get("video_source") or {}
+        if src_id.startswith("window:"):
+            hwnd = resolve_window(src)
+            m = monitor_of_window(hwnd)
+            target = f"hwnd={hwnd}:resize_mode=scale_aspect"
+        else:
+            screens = list_screens()
+            if src_id.startswith("monitor:"):
+                dev = src.get("device") or src_id.split(":", 1)[1]
+                m = next((x for x in screens if x["device"] == dev), None)
+            else:
+                m = next((x for x in screens if x["primary"]), None)
+            target = f"hmonitor={m['hmonitor']}" if m else None
+        h = info.get(m["device"]) if m else None
+        if not target or not h or not h["hdr"]:
+            return None
+        log(f"HDR screen {m['device']}: SDR white {h['white_nits']} nits, colors are converted to SDR")
+        return target, h["white_nits"]
 
     def alive(self):
         return self.proc is not None and self.proc.poll() is None
@@ -788,8 +904,10 @@ class App:
             log("complete failed:", e)
         self._local_stop()
 
-    def set_sources(self, video=None, audio=None):
+    def set_sources(self, video=None, audio=None, hdr_mode=None):
         s = load_settings()
+        if hdr_mode in ("auto", "off"):
+            s["hdr_mode"] = hdr_mode
         if video and video.get("id"):
             s["video_source"] = {k: video[k] for k in ("id", "label", "hwnd", "exe", "title", "device") if k in video}
         if audio and audio.get("id"):
@@ -833,7 +951,8 @@ class App:
             "error": self.error,
             "message": self.message,
             "defaults": {"title": s["default_title"], "privacy": s["default_privacy"]},
-            "sources": {"video": s.get("video_source"), "audio": s.get("audio_source")},
+            "sources": {"video": s.get("video_source"), "audio": s.get("audio_source"),
+                        "hdr_mode": s.get("hdr_mode", "auto")},
         }
 
 
@@ -903,7 +1022,7 @@ class Handler(BaseHTTPRequestHandler):
                 save_settings(s)
                 return self._send(200, {"ok": True})
             if p == "/api/sources":
-                APP.set_sources(body.get("video"), body.get("audio"))
+                APP.set_sources(body.get("video"), body.get("audio"), body.get("hdr_mode"))
                 return self._send(200, {"ok": True})
             if p == "/api/signin":
                 APP.yt.svc()

@@ -76,6 +76,8 @@ Privacy values:
 - `video_bitrate_kbps`: the video quality. 4500 for 1080p, 2500 for 720p.
 - `encoder`: `libx264` (works on all computers). Use `h264_nvenc` for an NVIDIA graphics card to decrease the load on the computer.
 - `capture_audio`: `true` sends the computer sound. `false` sends silence.
+- `hdr_mode`: `auto` corrects the colors when the screen uses Windows HDR. `off` stops the correction.
+- `video_source`, `audio_source`: set these in the control panel ("What to share").
 - `copy_link_on_start`, `open_panel_on_start`: `true` or `false`.
 
 ## If a problem occurs

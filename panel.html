@@ -63,6 +63,7 @@ ol li{margin:4px 0}code{background:#0f1218;padding:1px 6px;border-radius:4px}
   <h2>What to share <button onclick="loadSources()" style="float:right">Refresh lists</button></h2>
   <div class="row"><span style="width:70px">Picture</span><select id="vsrc" class="grow"></select></div>
   <div class="row"><span style="width:70px">Sound</span><select id="asrc" class="grow"></select></div>
+  <div class="row"><span style="width:70px">HDR</span><select id="hdr" class="grow"><option value="auto">Fix colors when the screen uses HDR (recommended)</option><option value="off">Off</option></select></div>
   <div class="row"><button class="pri" onclick="saveSources()">Use these sources</button>
     <span class="small" id="srcnote">The app uses these sources for every stream. During a live stream, the picture stops for about 2 seconds when you change them.</span></div>
 </div>
@@ -146,6 +147,7 @@ let srcLists={video:[],audio:[]}, savedSrc=null;
 function opt(o,sel){return '<option value="'+esc(o.id)+'"'+(sel?' selected':'')+'>'+esc(o.label)+'</option>'}
 function renderSources(){
   if(!savedSrc)return;
+  $('hdr').value=savedSrc.hdr_mode||'auto';
   const sv=savedSrc.video||{id:'screen:default'}, sa=savedSrc.audio||{id:'default'};
   let vsel=srcLists.video.find(v=>v.id===sv.id);
   if(!vsel&&sv.id&&sv.id.startsWith('window:'))vsel=srcLists.video.find(v=>v.exe===sv.exe&&v.title===sv.title)||srcLists.video.find(v=>v.exe===sv.exe);
@@ -162,7 +164,8 @@ async function loadSources(){
 }
 function saveSources(){
   const v=srcLists.video.find(x=>x.id===$('vsrc').value)||savedSrc.video, a=srcLists.audio.find(x=>x.id===$('asrc').value)||savedSrc.audio;
-  act(async()=>{await api('/api/sources',{video:v,audio:a});savedSrc={video:v,audio:a}},'Sources saved');
+  const h=$('hdr').value;
+  act(async()=>{await api('/api/sources',{video:v,audio:a,hdr_mode:h});savedSrc={video:v,audio:a,hdr_mode:h}},'Sources saved');
 }
 refresh();setInterval(refresh,3000);loadList();loadSources();
 </script></body></html>

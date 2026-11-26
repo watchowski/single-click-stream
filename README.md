@@ -14,6 +14,8 @@ Single Click Stream is a lightweight Windows desktop tool I built to remove all 
 |---|---|
 | 🖱️ **Single-click go-live** | One shortcut creates the broadcast, starts the capture and copies the link. |
 | 🖥️ **Screen + system audio** | Captures the desktop (DXGI Desktop Duplication) and whatever your speakers play (WASAPI loopback) — no virtual audio drivers needed. |
+| 🎯 **Pick what to share** | Any screen or a single app window (Windows Graphics Capture — works even when the window is covered), and any sound source: speakers, other output devices or microphones. Switch sources while live. |
+| 🌈 **Correct colors on HDR screens** | Captures Windows HDR desktops in 16-bit float and converts them to SDR on the GPU (Vulkan / libplacebo), so the stream is not washed out or over-saturated. |
 | 🔗 **Instant share link** | `https://youtu.be/<id>` is copied to the clipboard and shown in the panel. |
 | ✏️ **Live editing** | Rename the stream and switch **Public / Unlisted / Private** while you are live. |
 | 🗂️ **Stream manager** | List, rename, change privacy, open or delete all your past and current broadcasts from one page. |
@@ -44,6 +46,7 @@ Single Click Stream is a lightweight Windows desktop tool I built to remove all 
 
 - **Silent loopback gaps** – Windows delivers *no* audio packets while nothing is playing, which stalls FFmpeg and desyncs the stream. The audio writer paces output by wall clock, pads silence when the device is idle and drops excess when the device clock drifts ahead.
 - **High-DPI screens** – `gdigrab` captures only part of a scaled display; using `ddagrab` (Desktop Duplication API) captures the true resolution with GPU efficiency, with automatic fallback.
+- **HDR desktops look wrong in 8-bit capture** – Windows composes HDR screens in linear scRGB, where SDR white sits at *SDR white level / 80 nits* (e.g. 3.0). 8-bit capture clips and mis-encodes this (mid-gray 128 came out as 210). The app reads each display's HDR state and SDR white level from the Windows DisplayConfig API, captures FP16, and runs a small GPU shader that rescales and sRGB-encodes the image. FFmpeg's software path clamps half-floats to 1.0, so the math runs in a libplacebo user shader instead. Measured result: test-pattern colors reproduced within ±2 code values.
 - **Multichannel devices** – 7.1 sound cards are captured natively and downmixed to stereo for YouTube.
 
 ## 🚀 Getting started
@@ -78,6 +81,8 @@ python streamer.py --test-capture test.mp4
 | `video_bitrate_kbps` | `4500` | Video bitrate |
 | `encoder` | `libx264` | e.g. `h264_nvenc` for NVIDIA GPUs |
 | `capture_audio` | `true` | Send system audio or silence |
+| `video_source` / `audio_source` | main screen / speakers | Set from the control panel |
+| `hdr_mode` | `auto` | `auto` converts HDR screens to correct SDR colors, `off` disables it |
 
 ## 🔐 Security notes
 
@@ -97,7 +102,7 @@ docs/                  public home page & privacy policy (GitHub Pages, used by 
 
 ## 🛠️ Tech stack
 
-Python (stdlib `http.server`, threading) · Google API Python Client · OAuth 2.0 · FFmpeg (ddagrab, libx264, AAC, FLV/RTMP) · PyAudioWPatch (WASAPI loopback) · Vanilla JS
+Python (stdlib `http.server`, threading) · Google API Python Client · OAuth 2.0 · FFmpeg (ddagrab, gfxcapture, libplacebo/Vulkan, libx264, AAC, FLV/RTMP) · Win32 APIs via ctypes (DisplayConfig, EnumWindows) · PyAudioWPatch (WASAPI loopback) · Vanilla JS
 
 ## 📄 License
 
