@@ -14,7 +14,7 @@ Single Click Stream is a lightweight Windows desktop tool I built to remove all 
 |---|---|
 | 🖱️ **Single-click go-live** | One shortcut creates the broadcast, starts the capture and copies the link. |
 | 🖥️ **Screen + system audio** | Captures the desktop (DXGI Desktop Duplication) and whatever your speakers play (WASAPI loopback) — no virtual audio drivers needed. |
-| 🎯 **Pick what to share** | Any screen or a single app window (Windows Graphics Capture — works even when the window is covered), and any sound source: speakers, other output devices or microphones. Switch sources while live. |
+| 🎯 **Pick what to share** | Any screen or a single app window (Windows Graphics Capture — works even when the window is covered), and any sound source: **the sound of one single app** (e.g. only the game, not Discord), speakers, other output devices or microphones. Switch sources while live. |
 | 🌈 **Correct colors on HDR screens** | Captures Windows HDR desktops in 16-bit float and converts them to SDR on the GPU (Vulkan / libplacebo), so the stream is not washed out or over-saturated. |
 | 🔗 **Instant share link** | `https://youtu.be/<id>` is copied to the clipboard and shown in the panel. |
 | ✏️ **Live editing** | Rename the stream and switch **Public / Unlisted / Private** while you are live. |
@@ -47,6 +47,7 @@ Single Click Stream is a lightweight Windows desktop tool I built to remove all 
 - **Silent loopback gaps** – Windows delivers *no* audio packets while nothing is playing, which stalls FFmpeg and desyncs the stream. The audio writer paces output by wall clock, pads silence when the device is idle and drops excess when the device clock drifts ahead.
 - **High-DPI screens** – `gdigrab` captures only part of a scaled display; using `ddagrab` (Desktop Duplication API) captures the true resolution with GPU efficiency, with automatic fallback.
 - **HDR desktops look wrong in 8-bit capture** – Windows composes HDR screens in linear scRGB, where SDR white sits at *SDR white level / 80 nits* (e.g. 3.0). 8-bit capture clips and mis-encodes this (mid-gray 128 came out as 210). The app reads each display's HDR state and SDR white level from the Windows DisplayConfig API, captures FP16, and runs a small GPU shader that rescales and sRGB-encodes the image. FFmpeg's software path clamps half-floats to 1.0, so the math runs in a libplacebo user shader instead. Measured result: test-pattern colors reproduced within ±2 code values.
+- **Per-app sound** – Windows has no Python API for capturing a single app. A small C# helper (`helpers/AppLoopback.cs`) calls the process-loopback API (`ActivateAudioInterfaceAsync` with `PROCESS_LOOPBACK`, Windows 10 2004+) through COM interop and streams PCM to the app. It is compiled on first use with the C# compiler that ships with Windows, so no SDK is needed and no binary is committed.
 - **Multichannel devices** – 7.1 sound cards are captured natively and downmixed to stereo for YouTube.
 
 ## 🚀 Getting started
@@ -94,6 +95,7 @@ python streamer.py --test-capture test.mp4
 
 ```
 streamer.py            app: YouTube API client, capture pipeline, local web server
+helpers/AppLoopback.cs per-app sound capture helper (built automatically on first use)
 panel.html             control panel UI (vanilla HTML/CSS/JS, no build step)
 create_shortcuts.ps1   creates the desktop shortcuts
 SETUP.md               Google Cloud + YouTube setup guide

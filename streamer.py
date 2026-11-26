@@ -188,7 +188,9 @@ def list_windows():
         exe = _exe_of(hwnd)
         if buf.value in ("Program Manager",) or exe.lower() in ("textinputhost.exe",):
             return True
-        out.append({"hwnd": int(hwnd), "title": buf.value, "exe": exe,
+        pid = wt.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        out.append({"hwnd": int(hwnd), "title": buf.value, "exe": exe, "pid": pid.value,
                     "minimized": bool(user32.IsIconic(hwnd))})
         return True
 
@@ -212,6 +214,13 @@ def list_video_sources():
 def list_audio_sources():
     items = [{"id": "default", "label": "Computer sound (default speakers)"},
              {"id": "none", "label": "No sound"}]
+    seen = set()
+    for w in list_windows():
+        exe = w["exe"]
+        if not exe or exe.lower() in seen or exe.lower() in ("explorer.exe", "applicationframehost.exe"):
+            continue
+        seen.add(exe.lower())
+        items.append({"id": "app:" + exe, "label": f"App sound: {exe.rsplit('.', 1)[0]} - {w['title'][:50]}"})
     try:
         import pyaudiowpatch as pyaudio
         pa = pyaudio.PyAudio()
@@ -433,6 +442,79 @@ class LoopbackAudio:
             pass
 
 
+HELPER_SRC = os.path.join(APP_DIR, "helpers", "AppLoopback.cs")
+HELPER_EXE = os.path.join(APP_DIR, "bin", "AppLoopback.exe")
+
+
+def ensure_helper():
+    """Build the per-app sound helper with the C# compiler that is part of Windows."""
+    if os.path.exists(HELPER_EXE) and os.path.getmtime(HELPER_EXE) >= os.path.getmtime(HELPER_SRC):
+        return HELPER_EXE
+    csc = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Microsoft.NET", "Framework64", "v4.0.30319", "csc.exe")
+    if not os.path.exists(csc):
+        raise RuntimeError("The C# compiler of the .NET Framework was not found, so app sound is not available.")
+    os.makedirs(os.path.dirname(HELPER_EXE), exist_ok=True)
+    r = subprocess.run([csc, "-nologo", "-optimize", "-platform:x64", "-out:" + HELPER_EXE, HELPER_SRC],
+                       capture_output=True, text=True, creationflags=NO_WINDOW)
+    if r.returncode != 0:
+        raise RuntimeError("Could not build AppLoopback.exe: " + (r.stdout + r.stderr)[-300:])
+    log("built", HELPER_EXE)
+    return HELPER_EXE
+
+
+def find_pid(exe):
+    for w in list_windows():
+        if w["exe"].lower() == exe.lower():
+            return w["pid"]
+    r = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {exe}", "/FO", "CSV", "/NH"],
+                       capture_output=True, text=True, creationflags=NO_WINDOW)
+    for line in r.stdout.splitlines():
+        parts = [p.strip('"') for p in line.split('","')]
+        if len(parts) > 1 and parts[0].lower() == exe.lower():
+            return int(parts[1])
+    raise RuntimeError(f"The app {exe} is not running. Start it, or select another sound source.")
+
+
+class AppAudio(LoopbackAudio):
+    """Sound of one app (and its child processes) via the Windows process-loopback API.
+    Needs Windows 10 version 2004 or newer. Output: 48 kHz, stereo, 16-bit."""
+
+    def __init__(self, exe):
+        self.exe = exe
+        self.pid = find_pid(exe)
+        self.helper = ensure_helper()
+        self.rate, self.channels = 48000, 2
+        self.bpf = 4
+        self.buf = bytearray()
+        self.lock = threading.Lock()
+        self.last_data = 0.0
+        self.stop_flag = threading.Event()
+        self.proc = None
+        log(f"app sound: {exe} pid={self.pid}")
+
+    def start(self, sink):
+        errlog = open(os.path.join(LOG_DIR, "apploopback.log"), "ab")
+        self.proc = subprocess.Popen([self.helper, str(self.pid)], stdout=subprocess.PIPE, stderr=errlog,
+                                     stdin=subprocess.DEVNULL, creationflags=NO_WINDOW)
+        threading.Thread(target=self._reader, daemon=True).start()
+        threading.Thread(target=self._writer, args=(sink,), daemon=True).start()
+
+    def _reader(self):
+        while not self.stop_flag.is_set():
+            data = self.proc.stdout.read1(65536)
+            if not data:
+                log(f"app sound stopped ({self.exe} closed?)")
+                return
+            with self.lock:
+                self.buf.extend(data)
+                self.last_data = time.monotonic()
+
+    def stop(self):
+        self.stop_flag.set()
+        if self.proc and self.proc.poll() is None:
+            self.proc.kill()
+
+
 # --------------------------------------------------------------------------- capture
 class Capture:
     def __init__(self, target, settings, duration=None):
@@ -524,7 +606,10 @@ class Capture:
             self.audio = None
             if self.s.get("capture_audio", True) and audio_id != "none":
                 try:
-                    self.audio = LoopbackAudio(audio_id)
+                    if audio_id.startswith("app:"):
+                        self.audio = AppAudio(audio_id.split(":", 1)[1])
+                    else:
+                        self.audio = LoopbackAudio(audio_id)
                 except Exception as e:
                     log("sound capture not available, streaming silence:", e)
             try:

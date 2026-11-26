@@ -156,8 +156,7 @@ function renderSources(){
   $('vsrc').innerHTML=extraV+'<optgroup label="Screens">'+sc.map(v=>opt(v,vsel&&v.id===vsel.id)).join('')+'</optgroup><optgroup label="App windows">'+wn.map(v=>opt(v,vsel&&v.id===vsel.id)).join('')+'</optgroup>';
   const asel=srcLists.audio.find(a=>a.id===sa.id);
   const extraA=asel?'':opt({id:sa.id,label:(sa.label||sa.id)+' (not found now)'},true);
-  const outA=srcLists.audio.filter(a=>a.id==='default'||a.id==='none'), lb=srcLists.audio.filter(a=>a.id.startsWith('loopback:')), inp=srcLists.audio.filter(a=>a.id.startsWith('input:'));
-  $('asrc').innerHTML=extraA+outA.map(a=>opt(a,asel&&a.id===asel.id)).join('')+'<optgroup label="Sound that plays on a device">'+lb.map(a=>opt(a,asel&&a.id===asel.id)).join('')+'</optgroup><optgroup label="Microphones and inputs">'+inp.map(a=>opt(a,asel&&a.id===asel.id)).join('')+'</optgroup>';
+  const outA=srcLists.audio.filter(a=>a.id==='default'||a.id==='none'), lb=srcLists.audio.filter(a=>a.id.startsWith('loopback:')), inp=srcLists.audio.filter(a=>a.id.startsWith('input:')), apps=srcLists.audio.filter(a=>a.id.startsWith('app:'));  $('asrc').innerHTML=extraA+outA.map(a=>opt(a,asel&&a.id===asel.id)).join('')+'<optgroup label="Sound of one app">'+apps.map(a=>opt(a,asel&&a.id===asel.id)).join('')+'</optgroup><optgroup label="Sound that plays on a device">'+lb.map(a=>opt(a,asel&&a.id===asel.id)).join('')+'</optgroup><optgroup label="Microphones and inputs">'+inp.map(a=>opt(a,asel&&a.id===asel.id)).join('')+'</optgroup>';
 }
 async function loadSources(){
   try{const [l,s]=await Promise.all([api('/api/sources'),api('/api/status')]);srcLists=l;savedSrc=s.sources;renderSources()}catch(e){showErr(e.message)}

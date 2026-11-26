@@ -86,5 +86,6 @@ Privacy values:
 - To test the screen and sound capture without YouTube, run this command in this folder:
   `python streamer.py --test-capture test.mp4`
   The app records 8 seconds to the file `test.mp4`.
-- The app uses the sound of your default speakers. Your microphone is not included.
+- By default, the app uses the sound of your default speakers. Your microphone is not included.
+- To send the sound of only one app (for example a game), select it under "Sound of one app" in "What to share". The app must be open. Some games mute their sound when they are not the active window. Change this in the sound settings of the game.
 - The app uses the YouTube API. Each new stream uses approximately 200 of the 10,000 free daily units. This is sufficient for many streams each day.
