@@ -44,6 +44,8 @@ DEFAULT_SETTINGS = {
     "capture": "ddagrab",
     "monitor": 0,
     "capture_audio": True,
+    "video_source": {"id": "screen:default", "label": "Main screen (default)"},
+    "audio_source": {"id": "default", "label": "Computer sound (default speakers)"},
     "copy_link_on_start": True,
     "open_panel_on_start": True,
 }
@@ -104,6 +106,155 @@ def copy_to_clipboard(text):
         log("clipboard failed:", e)
 
 
+# --------------------------------------------------------------------------- source lists
+def _win32():
+    import ctypes
+    from ctypes import wintypes
+    return ctypes, wintypes
+
+
+def _dpi_aware():
+    try:
+        import ctypes
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except Exception:
+        pass
+
+
+def list_screens():
+    ctypes, wt = _win32()
+    user32 = ctypes.windll.user32
+
+    class MONITORINFOEXW(ctypes.Structure):
+        _fields_ = [("cbSize", wt.DWORD), ("rcMonitor", wt.RECT), ("rcWork", wt.RECT),
+                    ("dwFlags", wt.DWORD), ("szDevice", wt.WCHAR * 32)]
+
+    out = []
+    PROC = ctypes.WINFUNCTYPE(wt.BOOL, wt.HMONITOR, wt.HDC, ctypes.POINTER(wt.RECT), wt.LPARAM)
+
+    def cb(hmon, hdc, rect, lp):
+        mi = MONITORINFOEXW()
+        mi.cbSize = ctypes.sizeof(MONITORINFOEXW)
+        user32.GetMonitorInfoW(hmon, ctypes.byref(mi))
+        r = mi.rcMonitor
+        out.append({"hmonitor": int(hmon), "device": mi.szDevice, "primary": bool(mi.dwFlags & 1),
+                    "w": r.right - r.left, "h": r.bottom - r.top})
+        return True
+
+    user32.EnumDisplayMonitors(None, None, PROC(cb), 0)
+    out.sort(key=lambda m: (not m["primary"], m["device"]))
+    return out
+
+
+def _exe_of(hwnd):
+    ctypes, wt = _win32()
+    pid = wt.DWORD()
+    ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    h = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid.value)  # QUERY_LIMITED_INFORMATION
+    if not h:
+        return ""
+    try:
+        buf = ctypes.create_unicode_buffer(1024)
+        size = wt.DWORD(1024)
+        if ctypes.windll.kernel32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)):
+            return os.path.basename(buf.value)
+        return ""
+    finally:
+        ctypes.windll.kernel32.CloseHandle(h)
+
+
+def list_windows():
+    ctypes, wt = _win32()
+    user32 = ctypes.windll.user32
+    dwm = ctypes.windll.dwmapi
+    out = []
+    PROC = ctypes.WINFUNCTYPE(wt.BOOL, wt.HWND, wt.LPARAM)
+
+    def cb(hwnd, lp):
+        if not user32.IsWindowVisible(hwnd) or user32.GetWindow(hwnd, 4):  # GW_OWNER
+            return True
+        if user32.GetWindowLongW(hwnd, -20) & 0x80:  # WS_EX_TOOLWINDOW
+            return True
+        cloaked = wt.DWORD()
+        dwm.DwmGetWindowAttribute(hwnd, 14, ctypes.byref(cloaked), ctypes.sizeof(cloaked))
+        if cloaked.value:
+            return True
+        n = user32.GetWindowTextLengthW(hwnd)
+        if n == 0:
+            return True
+        buf = ctypes.create_unicode_buffer(n + 1)
+        user32.GetWindowTextW(hwnd, buf, n + 1)
+        exe = _exe_of(hwnd)
+        if buf.value in ("Program Manager",) or exe.lower() in ("textinputhost.exe",):
+            return True
+        out.append({"hwnd": int(hwnd), "title": buf.value, "exe": exe,
+                    "minimized": bool(user32.IsIconic(hwnd))})
+        return True
+
+    user32.EnumWindows(PROC(cb), 0)
+    return out
+
+
+def list_video_sources():
+    items = [{"id": "screen:default", "kind": "screen", "label": "Main screen (default)"}]
+    for i, m in enumerate(list_screens()):
+        items.append({"id": f"monitor:{m['device']}", "kind": "screen", "device": m["device"],
+                      "label": f"Screen {i + 1}{' (primary)' if m['primary'] else ''} - {m['w']}x{m['h']}"})
+    for w in list_windows():
+        name = w["exe"].rsplit(".", 1)[0] if w["exe"] else "app"
+        items.append({"id": f"window:{w['hwnd']}", "kind": "window", "hwnd": w["hwnd"], "exe": w["exe"],
+                      "title": w["title"],
+                      "label": f"{w['title'][:70]} [{name}]" + (" (minimized)" if w["minimized"] else "")})
+    return items
+
+
+def list_audio_sources():
+    items = [{"id": "default", "label": "Computer sound (default speakers)"},
+             {"id": "none", "label": "No sound"}]
+    try:
+        import pyaudiowpatch as pyaudio
+        pa = pyaudio.PyAudio()
+        try:
+            wasapi = pa.get_host_api_info_by_type(pyaudio.paWASAPI)["index"]
+            for i in range(pa.get_device_count()):
+                d = pa.get_device_info_by_index(i)
+                if d["hostApi"] != wasapi or d["maxInputChannels"] <= 0:
+                    continue
+                if d.get("isLoopbackDevice"):
+                    name = d["name"].replace(" [Loopback]", "")
+                    items.append({"id": "loopback:" + d["name"], "label": "Sound from: " + name})
+                else:
+                    items.append({"id": "input:" + d["name"], "label": "Microphone / input: " + d["name"]})
+        finally:
+            pa.terminate()
+    except Exception as e:
+        log("audio list failed:", e)
+    return items
+
+
+def resolve_window(src):
+    """Return a live HWND for a saved window source (the handle changes when the app restarts)."""
+    ctypes, wt = _win32()
+    hwnd = int(src.get("hwnd") or 0)
+    if hwnd and ctypes.windll.user32.IsWindow(hwnd):
+        return hwnd
+    wins = list_windows()
+    for w in wins:
+        if w["exe"] == src.get("exe") and w["title"] == src.get("title"):
+            return w["hwnd"]
+    for w in wins:
+        if src.get("exe") and w["exe"] == src.get("exe"):
+            return w["hwnd"]
+    raise RuntimeError(f"The window \"{src.get('title', '')}\" is closed. Select another source.")
+
+
+def resolve_monitor(device):
+    for m in list_screens():
+        if m["device"] == device:
+            return m["hmonitor"]
+    raise RuntimeError(f"The screen {device} is not connected. Select another source.")
+
+
 # --------------------------------------------------------------------------- audio
 class LoopbackAudio:
     """Captures what the speakers play (WASAPI loopback) and feeds a steady PCM stream.
@@ -111,20 +262,33 @@ class LoopbackAudio:
 
     LATENCY = 0.15  # seconds of buffer kept behind real time
 
-    def __init__(self):
+    def __init__(self, source_id="default"):
         import pyaudiowpatch as pyaudio
         self.pa_mod = pyaudio
         self.pa = pyaudio.PyAudio()
         wasapi = self.pa.get_host_api_info_by_type(pyaudio.paWASAPI)
-        out = self.pa.get_device_info_by_index(wasapi["defaultOutputDevice"])
-        dev = out if out.get("isLoopbackDevice") else None
-        if dev is None:
-            for lb in self.pa.get_loopback_device_info_generator():
-                if out["name"] in lb["name"]:
-                    dev = lb
+        dev = None
+        if source_id.startswith(("loopback:", "input:")):
+            want_loop = source_id.startswith("loopback:")
+            name = source_id.split(":", 1)[1]
+            for i in range(self.pa.get_device_count()):
+                d = self.pa.get_device_info_by_index(i)
+                if (d["hostApi"] == wasapi["index"] and d["maxInputChannels"] > 0 and d["name"] == name
+                        and bool(d.get("isLoopbackDevice")) == want_loop):
+                    dev = d
                     break
+            if dev is None:
+                log(f"audio source '{name}' not found, using the default speakers")
         if dev is None:
-            raise RuntimeError("No loopback device for the default speakers was found.")
+            out = self.pa.get_device_info_by_index(wasapi["defaultOutputDevice"])
+            dev = out if out.get("isLoopbackDevice") else None
+            if dev is None:
+                for lb in self.pa.get_loopback_device_info_generator():
+                    if out["name"] in lb["name"]:
+                        dev = lb
+                        break
+        if dev is None:
+            raise RuntimeError("No sound device was found.")
         self.dev = dev
         self.rate = int(dev["defaultSampleRate"])
         self.channels = int(dev["maxInputChannels"]) or 2
@@ -212,7 +376,15 @@ class Capture:
         fps = int(s["framerate"])
         br = int(s["video_bitrate_kbps"])
         cmd = [find_ffmpeg(), "-hide_banner", "-loglevel", "warning", "-y"]
-        if capture_mode == "ddagrab":
+        if capture_mode == "gfxcapture":
+            src = s.get("video_source") or {}
+            if src.get("id", "").startswith("window:"):
+                target = f"hwnd={resolve_window(src)}:resize_mode=scale_aspect"
+            else:
+                target = f"hmonitor={resolve_monitor(src.get('device') or src['id'].split(':', 1)[1])}"
+            cmd += ["-f", "lavfi", "-i", f"gfxcapture={target}:max_framerate={fps}:capture_cursor=1"]
+            vf = "hwdownload,format=bgra,"
+        elif capture_mode == "ddagrab":
             cmd += ["-f", "lavfi", "-i", f"ddagrab=output_idx={int(s['monitor'])}:framerate={fps}:draw_mouse=1"]
             vf = "hwdownload,format=bgra,"
         else:
@@ -224,7 +396,7 @@ class Capture:
                     "-ac", str(self.audio.channels), "-i", "pipe:0"]
         else:
             cmd += ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"]
-        vf += f"scale=-2:'min({int(s['max_height'])},ih)':flags=bicubic,format=yuv420p"
+        vf += f"scale=-2:'min({int(s['max_height'])},trunc(ih/2)*2)':flags=bicubic,format=yuv420p"
         cmd += ["-map", "0:v", "-map", "1:a", "-vf", vf]
         enc = s.get("encoder", "libx264")
         if enc == "libx264":
@@ -243,18 +415,31 @@ class Capture:
         return cmd
 
     def start(self):
-        modes = [self.s.get("capture", "ddagrab")]
-        if modes[0] != "gdigrab":
-            modes.append("gdigrab")
+        src_id = (self.s.get("video_source") or {}).get("id", "screen:default")
+        if src_id.startswith("window:"):
+            modes = ["gfxcapture"]
+        elif src_id.startswith("monitor:"):
+            modes = ["gfxcapture"]
+        else:
+            modes = [self.s.get("capture", "ddagrab")]
+            if modes[0] != "gdigrab":
+                modes.append("gdigrab")
+        audio_id = (self.s.get("audio_source") or {}).get("id", "default")
         last_err = ""
         for mode in modes:
             self.audio = None
-            if self.s.get("capture_audio", True):
+            if self.s.get("capture_audio", True) and audio_id != "none":
                 try:
-                    self.audio = LoopbackAudio()
+                    self.audio = LoopbackAudio(audio_id)
                 except Exception as e:
                     log("sound capture not available, streaming silence:", e)
-            cmd = self._cmd(mode)
+            try:
+                cmd = self._cmd(mode)
+            except RuntimeError:
+                if self.audio:
+                    self.audio.stop()
+                raise
+            log("sources:", src_id, "|", audio_id)
             log("ffmpeg:", " ".join(c if not c.startswith("rtmp") else "rtmp://<hidden>" for c in cmd))
             self.logfile = open(os.path.join(LOG_DIR, "ffmpeg.log"), "ab")
             self.logfile.write(f"\n==== {datetime.datetime.now()} mode={mode}\n".encode())
@@ -603,6 +788,22 @@ class App:
             log("complete failed:", e)
         self._local_stop()
 
+    def set_sources(self, video=None, audio=None):
+        s = load_settings()
+        if video and video.get("id"):
+            s["video_source"] = {k: video[k] for k in ("id", "label", "hwnd", "exe", "title", "device") if k in video}
+        if audio and audio.get("id"):
+            s["audio_source"] = {"id": audio["id"], "label": audio.get("label", audio["id"])}
+        save_settings(s)
+        # During a stream: restart the encoder with the new sources (a short break of about 2 s).
+        if self.capture and self.rtmp and self.phase in ("waiting", "live"):
+            old = self.capture
+            old.stop()
+            cap = Capture(self.rtmp, s)
+            cap.start()
+            self.capture = cap
+            self.message = "Sources changed. " + ("You are LIVE." if self.phase == "live" else "")
+
     def update(self, bid, title=None, privacy=None):
         if title is not None:
             self.yt.set_title(bid, title)
@@ -632,6 +833,7 @@ class App:
             "error": self.error,
             "message": self.message,
             "defaults": {"title": s["default_title"], "privacy": s["default_privacy"]},
+            "sources": {"video": s.get("video_source"), "audio": s.get("audio_source")},
         }
 
 
@@ -664,6 +866,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, f.read(), "text/html; charset=utf-8")
             if self.path == "/api/status":
                 return self._send(200, APP.status())
+            if self.path == "/api/sources":
+                return self._send(200, {"video": list_video_sources(), "audio": list_audio_sources()})
             if self.path == "/api/broadcasts":
                 return self._send(200, {"items": APP.yt.list_all()})
             self._send(404, {"error": "not found"})
@@ -697,6 +901,9 @@ class Handler(BaseHTTPRequestHandler):
                 if body.get("privacy") in PRIVACY_VALUES:
                     s["default_privacy"] = body["privacy"]
                 save_settings(s)
+                return self._send(200, {"ok": True})
+            if p == "/api/sources":
+                APP.set_sources(body.get("video"), body.get("audio"))
                 return self._send(200, {"ok": True})
             if p == "/api/signin":
                 APP.yt.svc()
@@ -741,6 +948,7 @@ def test_capture(out):
 
 def main():
     global APP
+    _dpi_aware()
     args = sys.argv[1:]
     if args[:1] == ["--test-capture"]:
         return test_capture(args[1] if len(args) > 1 else os.path.join(APP_DIR, "test.mp4"))

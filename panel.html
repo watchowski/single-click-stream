@@ -60,6 +60,14 @@ ol li{margin:4px 0}code{background:#0f1218;padding:1px 6px;border-radius:4px}
 </div>
 
 <div class="card">
+  <h2>What to share <button onclick="loadSources()" style="float:right">Refresh lists</button></h2>
+  <div class="row"><span style="width:70px">Picture</span><select id="vsrc" class="grow"></select></div>
+  <div class="row"><span style="width:70px">Sound</span><select id="asrc" class="grow"></select></div>
+  <div class="row"><button class="pri" onclick="saveSources()">Use these sources</button>
+    <span class="small" id="srcnote">The app uses these sources for every stream. During a live stream, the picture stops for about 2 seconds when you change them.</span></div>
+</div>
+
+<div class="card">
   <h2>Settings for the next stream (used by the single-click start)</h2>
   <div class="row"><input type="text" class="grow" id="dtitle" maxlength="100">
     <select id="dpriv"><option value="public">Public</option><option value="unlisted">Unlisted (link only)</option><option value="private">Private</option></select>
@@ -134,5 +142,27 @@ async function loadList(){
     else act(()=>api('/api/update',{id,title,privacy:tr.querySelector('select').value}),'Saved');
   });
 }
-refresh();setInterval(refresh,3000);loadList();
+let srcLists={video:[],audio:[]}, savedSrc=null;
+function opt(o,sel){return '<option value="'+esc(o.id)+'"'+(sel?' selected':'')+'>'+esc(o.label)+'</option>'}
+function renderSources(){
+  if(!savedSrc)return;
+  const sv=savedSrc.video||{id:'screen:default'}, sa=savedSrc.audio||{id:'default'};
+  let vsel=srcLists.video.find(v=>v.id===sv.id);
+  if(!vsel&&sv.id&&sv.id.startsWith('window:'))vsel=srcLists.video.find(v=>v.exe===sv.exe&&v.title===sv.title)||srcLists.video.find(v=>v.exe===sv.exe);
+  const extraV=vsel?'':opt({id:sv.id,label:(sv.label||sv.id)+' (not found now)'},true);
+  const sc=srcLists.video.filter(v=>v.kind==='screen'), wn=srcLists.video.filter(v=>v.kind==='window');
+  $('vsrc').innerHTML=extraV+'<optgroup label="Screens">'+sc.map(v=>opt(v,vsel&&v.id===vsel.id)).join('')+'</optgroup><optgroup label="App windows">'+wn.map(v=>opt(v,vsel&&v.id===vsel.id)).join('')+'</optgroup>';
+  const asel=srcLists.audio.find(a=>a.id===sa.id);
+  const extraA=asel?'':opt({id:sa.id,label:(sa.label||sa.id)+' (not found now)'},true);
+  const outA=srcLists.audio.filter(a=>a.id==='default'||a.id==='none'), lb=srcLists.audio.filter(a=>a.id.startsWith('loopback:')), inp=srcLists.audio.filter(a=>a.id.startsWith('input:'));
+  $('asrc').innerHTML=extraA+outA.map(a=>opt(a,asel&&a.id===asel.id)).join('')+'<optgroup label="Sound that plays on a device">'+lb.map(a=>opt(a,asel&&a.id===asel.id)).join('')+'</optgroup><optgroup label="Microphones and inputs">'+inp.map(a=>opt(a,asel&&a.id===asel.id)).join('')+'</optgroup>';
+}
+async function loadSources(){
+  try{const [l,s]=await Promise.all([api('/api/sources'),api('/api/status')]);srcLists=l;savedSrc=s.sources;renderSources()}catch(e){showErr(e.message)}
+}
+function saveSources(){
+  const v=srcLists.video.find(x=>x.id===$('vsrc').value)||savedSrc.video, a=srcLists.audio.find(x=>x.id===$('asrc').value)||savedSrc.audio;
+  act(async()=>{await api('/api/sources',{video:v,audio:a});savedSrc={video:v,audio:a}},'Sources saved');
+}
+refresh();setInterval(refresh,3000);loadList();loadSources();
 </script></body></html>
