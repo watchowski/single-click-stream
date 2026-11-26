@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Single Click Stream</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{--bg:#0f1115;--card:#181b22;--line:#2a2f3a;--txt:#e8eaf0;--mut:#9aa3b2;--red:#ff3b3b;--grn:#27c46b;--blu:#3d8bff}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--txt);font:15px/1.45 Segoe UI,system-ui,sans-serif}
+main{max-width:920px;margin:0 auto;padding:24px}
+h1{font-size:22px;margin:0 0 16px;display:flex;align-items:center;gap:10px}
+h2{font-size:16px;margin:0 0 12px;color:var(--mut);font-weight:600}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
+button{font:inherit;border:0;border-radius:8px;padding:8px 14px;cursor:pointer;background:#2b3140;color:var(--txt)}
+button:hover{filter:brightness(1.2)}button:disabled{opacity:.5;cursor:default}
+.big{font-size:20px;padding:16px 28px;font-weight:700}
+.go{background:var(--red);color:#fff}.stop{background:#444b5c}.del{background:#5a1f24;color:#ffb3b3}.pri{background:var(--blu);color:#fff}
+input,select{font:inherit;background:#0f1218;color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+input[type=text]{width:100%}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0}
+.grow{flex:1;min-width:220px}
+.link{font-size:18px;font-weight:600;color:#8fc1ff;word-break:break-all}
+.badge{display:inline-block;padding:2px 10px;border-radius:99px;font-size:13px;font-weight:700;background:#333}
+.badge.live{background:var(--red);color:#fff}.badge.wait{background:#a77b00;color:#fff}
+.msg{color:var(--mut)}.err{background:#3a1418;border:1px solid #7a2a31;color:#ffc9c9;padding:10px;border-radius:8px;margin-bottom:16px}
+table{width:100%;border-collapse:collapse}td{padding:8px 6px;border-top:1px solid var(--line);vertical-align:middle}
+td.t input{min-width:200px}.small{font-size:13px;color:var(--mut)}
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#222a;backdrop-filter:blur(6px);border:1px solid var(--line);padding:10px 18px;border-radius:10px;display:none}
+ol li{margin:4px 0}code{background:#0f1218;padding:1px 6px;border-radius:4px}
+</style></head><body><main>
+<h1>&#128308; Single Click Stream <span id="badge" class="badge"></span></h1>
+<div id="err" class="err" style="display:none"></div>
+
+<div id="setup" class="card" style="display:none">
+  <h2>Setup needed</h2>
+  <p>The file <code>client_secret.json</code> is not in the app folder. Follow <b>SETUP.md</b> (part 1) in the app folder, then refresh this page.</p>
+</div>
+
+<div id="signin" class="card" style="display:none">
+  <h2>Connect your YouTube account</h2>
+  <p>Click the button. A Google page opens. Choose your YouTube account and allow access. You do this one time only.</p>
+  <button class="pri big" onclick="signin()">Sign in with Google</button>
+</div>
+
+<div id="now" class="card">
+  <h2>Current stream</h2>
+  <div id="idle">
+    <p class="msg" id="idlemsg">No stream is live.</p>
+    <button class="go big" id="startbtn" onclick="startStream()">&#9679; Go live now</button>
+  </div>
+  <div id="active" style="display:none">
+    <div class="row"><span class="link" id="link"></span>
+      <button class="pri" onclick="copy(cur.link)">Copy link</button>
+      <button onclick="window.open(cur.link)">Open</button></div>
+    <p class="msg" id="msg"></p>
+    <div class="row"><input type="text" class="grow" id="ctitle" maxlength="100">
+      <select id="cpriv"><option value="public">Public</option><option value="unlisted">Unlisted (link only)</option><option value="private">Private</option></select>
+      <button class="pri" onclick="saveCurrent()">Save</button></div>
+    <div class="row" style="margin-top:14px">
+      <button class="stop big" onclick="stopStream()">&#9632; Stop stream</button>
+      <button class="del" onclick="del(cur.id, cur.title)">Delete stream</button></div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Settings for the next stream (used by the single-click start)</h2>
+  <div class="row"><input type="text" class="grow" id="dtitle" maxlength="100">
+    <select id="dpriv"><option value="public">Public</option><option value="unlisted">Unlisted (link only)</option><option value="private">Private</option></select>
+    <button class="pri" onclick="saveDefaults()">Save</button></div>
+  <div class="small"><code>{date}</code> in the title changes to the date and time of the stream.</div>
+</div>
+
+<div class="card">
+  <h2>All my streams <button onclick="loadList()" style="float:right">Refresh</button></h2>
+  <table id="list"><tr><td class="small">Loading...</td></tr></table>
+</div>
+
+<div class="small" style="text-align:right"><button onclick="quitApp()">Close the app</button></div>
+</main>
+<div class="toast" id="toast"></div>
+<script>
+let cur=null, lastPhase=null, editing=false;
+const $=id=>document.getElementById(id);
+async function api(path,body){
+  const r=await fetch(path, body===undefined?{}:{method:'POST',headers:{'X-Panel':'1','Content-Type':'application/json'},body:JSON.stringify(body)});
+  const j=await r.json(); if(!r.ok) throw new Error(j.error||r.status); return j;
+}
+function toast(t){const e=$('toast');e.textContent=t;e.style.display='block';clearTimeout(e._t);e._t=setTimeout(()=>e.style.display='none',2500)}
+function showErr(e){$('err').style.display=e?'block':'none';$('err').textContent=e||''}
+function copy(t){navigator.clipboard.writeText(t).then(()=>toast('Link copied'),()=>prompt('Copy this link:',t))}
+const PRIV={public:'Public',unlisted:'Unlisted',private:'Private'};
+async function refresh(){
+  let s; try{s=await api('/api/status')}catch(e){$('badge').textContent='app closed';return}
+  $('setup').style.display=s.setup_ok?'none':'block';
+  $('signin').style.display=(s.setup_ok&&!s.authorized)?'block':'none';
+  $('startbtn').disabled=!(s.setup_ok&&s.authorized);
+  if(s.error) showErr(s.error); 
+  cur=s.current;
+  const b=$('badge');
+  b.className='badge'+(s.phase==='live'?' live':(s.phase==='idle'?'':' wait'));
+  b.textContent={idle:'offline',starting:'starting',waiting:'connecting',live:'LIVE',stopping:'stopping'}[s.phase];
+  $('idle').style.display=cur?'none':'block';
+  $('active').style.display=cur?'block':'none';
+  if(s.phase==='starting'&&!cur){$('idlemsg').textContent=s.message;$('startbtn').disabled=true}
+  else if(!cur){$('idlemsg').textContent=s.message||'No stream is live.'}
+  if(cur){
+    $('link').textContent=cur.link;
+    $('msg').textContent=s.message+(s.yt_status?' (YouTube status: '+s.yt_status+')':'');
+    if(!editing){$('ctitle').value=cur.title;$('cpriv').value=cur.privacy}
+  }
+  if(!$('dtitle')._set){$('dtitle').value=s.defaults.title;$('dpriv').value=s.defaults.privacy;$('dtitle')._set=1}
+  if(lastPhase!==null&&lastPhase!==s.phase&&(s.phase==='idle'||s.phase==='live'))loadList();
+  lastPhase=s.phase;
+}
+['ctitle','cpriv'].forEach(id=>{$(id).addEventListener('focus',()=>editing=true);$(id).addEventListener('input',()=>editing=true)});
+async function act(fn,ok){try{showErr('');await fn();if(ok)toast(ok)}catch(e){showErr(e.message)}refresh()}
+function startStream(){act(()=>api('/api/start',{}),'Starting...')}
+function stopStream(){if(confirm('Stop the live stream?'))act(()=>api('/api/stop',{}),'Stream stopped')}
+function saveCurrent(){act(async()=>{await api('/api/update',{id:cur.id,title:$('ctitle').value,privacy:$('cpriv').value});editing=false;loadList()},'Saved')}
+function saveDefaults(){act(()=>api('/api/defaults',{title:$('dtitle').value,privacy:$('dpriv').value}),'Saved')}
+function signin(){toast('A Google sign-in page opens now...');act(()=>api('/api/signin',{}),'Signed in')}
+function del(id,title){if(confirm('Delete "'+title+'" from YouTube? You cannot undo this.'))act(async()=>{await api('/api/delete',{id});loadList()},'Deleted')}
+function quitApp(){if(confirm('Close the app? A live stream stops.'))api('/api/quit',{}).then(()=>{document.body.innerHTML='<main><h1>The app is closed.</h1><p>Use the desktop shortcut to start it again.</p></main>'})}
+function esc(t){return String(t).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+async function loadList(){
+  const t=$('list');
+  let r; try{r=await api('/api/broadcasts')}catch(e){t.innerHTML='<tr><td class="small">'+esc(e.message)+'</td></tr>';return}
+  if(!r.items.length){t.innerHTML='<tr><td class="small">No streams yet.</td></tr>';return}
+  t.innerHTML=r.items.map(b=>'<tr data-id="'+b.id+'"><td class="t"><input type="text" value="'+esc(b.title)+'" maxlength="100"><div class="small">'+esc((b.start||'').replace('T',' ').slice(0,16))+' &middot; '+esc(b.status)+'</div></td>'+
+    '<td><select>'+Object.keys(PRIV).map(p=>'<option value="'+p+'"'+(p===b.privacy?' selected':'')+'>'+PRIV[p]+'</option>').join('')+'</select></td>'+
+    '<td style="white-space:nowrap"><button class="pri" data-a="save">Save</button> <button data-a="copy">Copy link</button> <button data-a="open">Open</button> <button class="del" data-a="del">Delete</button></td></tr>').join('');
+  t.querySelectorAll('button').forEach(btn=>btn.onclick=()=>{
+    const tr=btn.closest('tr'),id=tr.dataset.id,link='https://youtu.be/'+id,title=tr.querySelector('input').value;
+    const a=btn.dataset.a;
+    if(a==='copy')copy(link);else if(a==='open')window.open(link);
+    else if(a==='del')del(id,title);
+    else act(()=>api('/api/update',{id,title,privacy:tr.querySelector('select').value}),'Saved');
+  });
+}
+refresh();setInterval(refresh,3000);loadList();
+</script></body></html>

@@ -1,0 +1,19 @@
+# Secrets - never commit
+client_secret*.json
+token.json
+*.pem
+*.key
+.env
+
+# Local data
+settings.json
+logs/
+*.log
+*.mp4
+*.mkv
+*.flv
+
+# Python
+__pycache__/
+*.pyc
+.venv/
