@@ -59,6 +59,7 @@ CAUTION: When the app stays in "Testing" mode, Google stops your sign-in after 7
   - The app makes a new stream, starts to send your screen and sound, and copies the link to the clipboard.
   - The control panel opens and shows the link. YouTube shows the stream after approximately 10 to 30 seconds.
 - To change the title or the privacy (Public, Unlisted, Private): type the new value in the control panel and click "Save". You can do this during the stream.
+- To change the sound level for the viewers: move the "Stream volume" slider (0% to 200%). Click "Mute stream" to send no sound. Click "Unmute stream" to go back to the earlier level. Your own volume does not change.
 - To stop the stream: click "Stop stream". The recording stays on your channel.
 - To delete a stream: click "Delete". This removes the stream and its recording from YouTube.
 - To set the title and privacy for the next single-click start: use "Settings for the next stream".

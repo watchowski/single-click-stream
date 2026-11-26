@@ -53,6 +53,11 @@ ol li{margin:4px 0}code{background:#0f1218;padding:1px 6px;border-radius:4px}
     <div class="row"><input type="text" class="grow" id="ctitle" maxlength="100">
       <select id="cpriv"><option value="public">Public</option><option value="unlisted">Unlisted (link only)</option><option value="private">Private</option></select>
       <button class="pri" onclick="saveCurrent()">Save</button></div>
+    <div class="row"><span style="width:110px">Stream volume</span>
+      <input type="range" id="vol" min="0" max="200" step="1" class="grow" oninput="volInput()">
+      <span id="volv" style="width:52px;text-align:right">100%</span>
+      <button id="mute" onclick="toggleMute()">Mute stream</button></div>
+    <div class="small">Changes only the sound that viewers hear. Your own volume does not change. Above 100% makes the sound louder.</div>
     <div class="row" style="margin-top:14px">
       <button class="stop big" onclick="stopStream()">&#9632; Stop stream</button>
       <button class="del" onclick="del(cur.id, cur.title)">Delete stream</button></div>
@@ -126,6 +131,7 @@ async function refresh(){
     $('msg').textContent=s.message+(s.yt_status?' (YouTube status: '+s.yt_status+')':'');
     if(!editing){$('ctitle').value=cur.title;$('cpriv').value=cur.privacy}
   }
+  if(s.volume){vstate=s.volume;if(Date.now()-volTouched>1500)$('vol').value=s.volume.volume;showVol()}
   if(!$('qenc')._set&&s.quality){$('qenc').value=s.quality.encoder;$('qbr').value=s.quality.bitrate;$('qfps').value=String(s.quality.fps);$('qenc')._set=1}
   if(!$('dtitle')._set){$('dtitle').value=s.defaults.title;$('dpriv').value=s.defaults.privacy;$('dtitle')._set=1}
   if(lastPhase!==null&&lastPhase!==s.phase&&(s.phase==='idle'||s.phase==='live'))loadList();
@@ -136,6 +142,15 @@ async function act(fn,ok){try{showErr('');await fn();if(ok)toast(ok)}catch(e){sh
 function startStream(){act(()=>api('/api/start',{}),'Starting...')}
 function stopStream(){if(confirm('Stop the live stream?'))act(()=>api('/api/stop',{}),'Stream stopped')}
 function saveCurrent(){act(async()=>{await api('/api/update',{id:cur.id,title:$('ctitle').value,privacy:$('cpriv').value});editing=false;loadList()},'Saved')}
+let vstate={volume:100,muted:false},volTouched=0,volTimer=null;
+function showVol(){
+  $('volv').textContent=$('vol').value+'%';
+  $('mute').textContent=vstate.muted?'Unmute stream':'Mute stream';
+  $('mute').className=vstate.muted?'del':'';
+  $('vol').disabled=vstate.muted;
+}
+function volInput(){volTouched=Date.now();showVol();clearTimeout(volTimer);volTimer=setTimeout(()=>api('/api/volume',{volume:+$('vol').value}).then(r=>{vstate=r;showVol()}).catch(e=>showErr(e.message)),120)}
+function toggleMute(){api('/api/volume',{muted:!vstate.muted}).then(r=>{vstate=r;showVol();toast(r.muted?'Stream sound is off':'Stream sound is on')}).catch(e=>showErr(e.message))}
 function saveQuality(){act(()=>api('/api/quality',{encoder:$('qenc').value,bitrate:+$('qbr').value,fps:+$('qfps').value}),'Saved')}
 function saveDefaults(){act(()=>api('/api/defaults',{title:$('dtitle').value,privacy:$('dpriv').value}),'Saved')}
 function signin(){toast('A Google sign-in page opens now...');act(()=>api('/api/signin',{}),'Signed in')}

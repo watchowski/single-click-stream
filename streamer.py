@@ -338,6 +338,49 @@ vec4 hook() {
 """
 
 # --------------------------------------------------------------------------- audio
+try:
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        import audioop  # Python <= 3.12; "audioop-lts" on Python 3.13+
+except ImportError:
+    audioop = None
+
+
+class StreamGain:
+    """Volume of the stream sound only (0-200 %). It changes the PCM before the encoder,
+    so the Windows volume and the sound that the user hears do not change."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.volume = 100
+        self.muted = False
+
+    def set(self, volume=None, muted=None):
+        with self.lock:
+            if volume is not None:
+                self.volume = max(0, min(200, int(volume)))
+            if muted is not None:
+                self.muted = bool(muted)
+
+    def factor(self):
+        with self.lock:
+            return 0.0 if self.muted else self.volume / 100.0
+
+    def apply(self, pcm):
+        f = self.factor()
+        if f == 1.0 or not pcm:
+            return pcm
+        if f == 0.0:
+            return b"\x00" * len(pcm)
+        if audioop is None:
+            return pcm
+        return audioop.mul(pcm, 2, f)  # clips at the 16-bit limits
+
+
+GAIN = StreamGain()
+
+
 class LoopbackAudio:
     """Captures what the speakers play (WASAPI loopback) and feeds a steady PCM stream.
     Windows sends no data while nothing plays, so silence is filled in by wall clock."""
@@ -422,7 +465,7 @@ class LoopbackAudio:
                     chunk += b"\x00" * ((need - take) * self.bpf)
                     take = need
                 if chunk:
-                    sink.write(chunk)
+                    sink.write(GAIN.apply(chunk))
                     sink.flush()
                     written += take
         except (BrokenPipeError, OSError, ValueError):
@@ -894,6 +937,7 @@ class App:
 
     def _start_worker(self, title, privacy):
         s = load_settings()
+        GAIN.set(s.get("stream_volume", 100), False)
         title = (title or s["default_title"]).replace("{date}", datetime.datetime.now().strftime("%Y-%m-%d %H:%M"))
         privacy = privacy if privacy in PRIVACY_VALUES else s["default_privacy"]
         try:
@@ -1027,6 +1071,12 @@ class App:
             self.capture = cap
             self.message = "Sources changed. " + ("You are LIVE." if self.phase == "live" else "")
 
+    def set_volume(self, volume=None, muted=None):
+        GAIN.set(volume, muted)
+        s = load_settings()
+        s["stream_volume"] = GAIN.volume
+        save_settings(s)
+
     def set_quality(self, encoder=None, bitrate=None, fps=None):
         s = load_settings()
         if encoder in ("av1_nvenc", "h264_nvenc", "libx264"):
@@ -1068,6 +1118,7 @@ class App:
             "defaults": {"title": s["default_title"], "privacy": s["default_privacy"]},
             "sources": {"video": s.get("video_source"), "audio": s.get("audio_source"),
                         "hdr_mode": s.get("hdr_mode", "auto")},
+            "volume": {"volume": GAIN.volume, "muted": GAIN.muted, "available": audioop is not None},
             "quality": {"encoder": s.get("encoder"), "bitrate": s.get("video_bitrate_kbps"),
                         "fps": s.get("framerate")},
         }
@@ -1141,6 +1192,9 @@ class Handler(BaseHTTPRequestHandler):
             if p == "/api/sources":
                 APP.set_sources(body.get("video"), body.get("audio"), body.get("hdr_mode"))
                 return self._send(200, {"ok": True})
+            if p == "/api/volume":
+                APP.set_volume(body.get("volume"), body.get("muted"))
+                return self._send(200, {"ok": True, "volume": GAIN.volume, "muted": GAIN.muted})
             if p == "/api/quality":
                 APP.set_quality(body.get("encoder"), body.get("bitrate"), body.get("fps"))
                 return self._send(200, {"ok": True})
@@ -1202,6 +1256,7 @@ def main():
         webbrowser.open(PANEL_URL)
         return
     APP = App()
+    GAIN.set(s.get("stream_volume", 100), False)
     srv = ThreadingHTTPServer((HOST, PORT), Handler)
     log("control panel on", PANEL_URL)
     if not panel_only and os.path.exists(CLIENT_SECRET) and APP.yt.authorized():

@@ -16,6 +16,7 @@ Single Click Stream is a lightweight Windows desktop tool I built to remove all 
 | 🖥️ **Screen + system audio** | Captures the desktop (DXGI Desktop Duplication) and whatever your speakers play (WASAPI loopback) — no virtual audio drivers needed. |
 | 🎯 **Pick what to share** | Any screen or a single app window (Windows Graphics Capture — works even when the window is covered), and any sound source: **the sound of one single app** (e.g. only the game, not Discord), speakers, other output devices or microphones. Switch sources while live. |
 | 🌈 **Correct colors on HDR screens** | Captures Windows HDR desktops in 16-bit float and converts them to SDR on the GPU (Vulkan / libplacebo), so the stream is not washed out or over-saturated. |
+| 🔊 **Stream-only volume** | Slider (0–200 %) and mute button that change only what viewers hear — the Windows volume and your own audio stay the same. Unmute returns to the previous level. |
 | 🔗 **Instant share link** | `https://youtu.be/<id>` is copied to the clipboard and shown in the panel. |
 | ✏️ **Live editing** | Rename the stream and switch **Public / Unlisted / Private** while you are live. |
 | 🗂️ **Stream manager** | List, rename, change privacy, open or delete all your past and current broadcasts from one page. |

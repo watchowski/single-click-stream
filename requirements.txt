@@ -2,3 +2,4 @@ google-api-python-client>=2.100
 google-auth-oauthlib>=1.2
 google-auth-httplib2>=0.2
 PyAudioWPatch>=0.2.12
+audioop-lts>=0.2; python_version >= "3.13"
