@@ -80,7 +80,7 @@ python streamer.py --test-capture test.mp4
 | `monitor` | `0` | Display index to capture |
 | `framerate` / `max_height` | `30` / `1080` | Output video format |
 | `video_bitrate_kbps` | `4500` | Video bitrate |
-| `encoder` | `libx264` | `h264_nvenc` uses an NVIDIA GPU (falls back to `libx264` if it fails) |
+| `encoder` | `libx264` | `av1_nvenc` (best quality, RTX 40/50), `h264_nvenc` or `libx264`; falls back along that list if one fails. Also set in the control panel |
 | `capture_audio` | `true` | Send system audio or silence |
 | `video_source` / `audio_source` | main screen / speakers | Set from the control panel |
 | `hdr_mode` | `auto` | `auto` converts HDR screens to correct SDR colors, `off` disables it |
@@ -104,7 +104,7 @@ docs/                  public home page & privacy policy (GitHub Pages, used by 
 
 ## 🛠️ Tech stack
 
-Python (stdlib `http.server`, threading) · Google API Python Client · OAuth 2.0 · FFmpeg (ddagrab, gfxcapture, libplacebo/Vulkan, libx264, AAC, FLV/RTMP) · Win32 APIs via ctypes (DisplayConfig, EnumWindows) · PyAudioWPatch (WASAPI loopback) · Vanilla JS
+Python (stdlib `http.server`, threading) · Google API Python Client · OAuth 2.0 · FFmpeg (ddagrab, gfxcapture, libplacebo/Vulkan, AV1/H.264 NVENC, libx264, AAC, Enhanced RTMP) · Win32 APIs via ctypes (DisplayConfig, EnumWindows) · PyAudioWPatch (WASAPI loopback) · Vanilla JS
 
 ## 📄 License
 

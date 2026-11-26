@@ -569,6 +569,9 @@ class Capture:
         enc = s.get("encoder", "libx264")
         if enc == "libx264":
             cmd += ["-c:v", "libx264", "-preset", "veryfast"]
+        elif enc == "av1_nvenc":
+            cmd += ["-c:v", "av1_nvenc", "-preset", "p7", "-tune", "uhq", "-rc", "cbr", "-multipass", "qres",
+                    "-rc-lookahead", "20", "-spatial-aq", "1", "-temporal-aq", "1"]
         elif enc == "h264_nvenc":
             cmd += ["-c:v", "h264_nvenc", "-preset", "p5", "-tune", "hq", "-rc", "cbr",
                     "-bf", "2", "-profile:v", "high"]
@@ -585,15 +588,19 @@ class Capture:
             cmd += [self.target]
         return cmd
 
+    FALLBACK = {"av1_nvenc": "h264_nvenc", "h264_nvenc": "libx264"}
+
     def start(self):
-        try:
-            self._start()
-        except RuntimeError:
-            if self.s.get("encoder", "libx264") == "libx264":
-                raise
-            log(f"encoder {self.s.get('encoder')} failed, trying libx264")
-            self.s = dict(self.s, encoder="libx264")
-            self._start()
+        while True:
+            try:
+                return self._start()
+            except RuntimeError:
+                enc = self.s.get("encoder", "libx264")
+                nxt = self.FALLBACK.get(enc)
+                if not nxt:
+                    raise
+                log(f"encoder {enc} failed, trying {nxt}")
+                self.s = dict(self.s, encoder=nxt)
 
     def _start(self):
         src_id = (self.s.get("video_source") or {}).get("id", "screen:default")
@@ -1020,6 +1027,16 @@ class App:
             self.capture = cap
             self.message = "Sources changed. " + ("You are LIVE." if self.phase == "live" else "")
 
+    def set_quality(self, encoder=None, bitrate=None, fps=None):
+        s = load_settings()
+        if encoder in ("av1_nvenc", "h264_nvenc", "libx264"):
+            s["encoder"] = encoder
+        if bitrate:
+            s["video_bitrate_kbps"] = max(1000, min(51000, int(bitrate)))
+        if fps in (30, 60, "30", "60"):
+            s["framerate"] = int(fps)
+        save_settings(s)
+
     def update(self, bid, title=None, privacy=None):
         if title is not None:
             self.yt.set_title(bid, title)
@@ -1051,6 +1068,8 @@ class App:
             "defaults": {"title": s["default_title"], "privacy": s["default_privacy"]},
             "sources": {"video": s.get("video_source"), "audio": s.get("audio_source"),
                         "hdr_mode": s.get("hdr_mode", "auto")},
+            "quality": {"encoder": s.get("encoder"), "bitrate": s.get("video_bitrate_kbps"),
+                        "fps": s.get("framerate")},
         }
 
 
@@ -1121,6 +1140,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"ok": True})
             if p == "/api/sources":
                 APP.set_sources(body.get("video"), body.get("audio"), body.get("hdr_mode"))
+                return self._send(200, {"ok": True})
+            if p == "/api/quality":
+                APP.set_quality(body.get("encoder"), body.get("bitrate"), body.get("fps"))
                 return self._send(200, {"ok": True})
             if p == "/api/signin":
                 APP.yt.svc()

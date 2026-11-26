@@ -69,6 +69,18 @@ ol li{margin:4px 0}code{background:#0f1218;padding:1px 6px;border-radius:4px}
 </div>
 
 <div class="card">
+  <h2>Video quality (used from the next stream)</h2>
+  <div class="row"><span style="width:70px">Format</span><select id="qenc" class="grow">
+    <option value="av1_nvenc">AV1 on the NVIDIA graphics card (best quality)</option>
+    <option value="h264_nvenc">H.264 on the NVIDIA graphics card</option>
+    <option value="libx264">H.264 on the processor (works on all computers)</option></select></div>
+  <div class="row"><span style="width:70px">Bitrate</span><input id="qbr" type="number" min="1000" max="51000" step="500" style="width:120px"> <span class="small">kbps (your upload speed must be higher)</span></div>
+  <div class="row"><span style="width:70px">Frames</span><select id="qfps"><option value="30">30 fps</option><option value="60">60 fps (smoother, for games)</option></select>
+    <button class="pri" onclick="saveQuality()">Save</button></div>
+  <div class="small">If the selected format does not work, the app changes to the next format in the list.</div>
+</div>
+
+<div class="card">
   <h2>Settings for the next stream (used by the single-click start)</h2>
   <div class="row"><input type="text" class="grow" id="dtitle" maxlength="100">
     <select id="dpriv"><option value="public">Public</option><option value="unlisted">Unlisted (link only)</option><option value="private">Private</option></select>
@@ -114,6 +126,7 @@ async function refresh(){
     $('msg').textContent=s.message+(s.yt_status?' (YouTube status: '+s.yt_status+')':'');
     if(!editing){$('ctitle').value=cur.title;$('cpriv').value=cur.privacy}
   }
+  if(!$('qenc')._set&&s.quality){$('qenc').value=s.quality.encoder;$('qbr').value=s.quality.bitrate;$('qfps').value=String(s.quality.fps);$('qenc')._set=1}
   if(!$('dtitle')._set){$('dtitle').value=s.defaults.title;$('dpriv').value=s.defaults.privacy;$('dtitle')._set=1}
   if(lastPhase!==null&&lastPhase!==s.phase&&(s.phase==='idle'||s.phase==='live'))loadList();
   lastPhase=s.phase;
@@ -123,6 +136,7 @@ async function act(fn,ok){try{showErr('');await fn();if(ok)toast(ok)}catch(e){sh
 function startStream(){act(()=>api('/api/start',{}),'Starting...')}
 function stopStream(){if(confirm('Stop the live stream?'))act(()=>api('/api/stop',{}),'Stream stopped')}
 function saveCurrent(){act(async()=>{await api('/api/update',{id:cur.id,title:$('ctitle').value,privacy:$('cpriv').value});editing=false;loadList()},'Saved')}
+function saveQuality(){act(()=>api('/api/quality',{encoder:$('qenc').value,bitrate:+$('qbr').value,fps:+$('qfps').value}),'Saved')}
 function saveDefaults(){act(()=>api('/api/defaults',{title:$('dtitle').value,privacy:$('dpriv').value}),'Saved')}
 function signin(){toast('A Google sign-in page opens now...');act(()=>api('/api/signin',{}),'Signed in')}
 function del(id,title){if(confirm('Delete "'+title+'" from YouTube? You cannot undo this.'))act(async()=>{await api('/api/delete',{id});loadList()},'Deleted')}
