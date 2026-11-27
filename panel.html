@@ -163,7 +163,7 @@ async function loadList(){
   const t=$('list');
   let r; try{r=await api('/api/broadcasts')}catch(e){t.innerHTML='<tr><td class="small">'+esc(e.message)+'</td></tr>';return}
   if(!r.items.length){t.innerHTML='<tr><td class="small">No streams yet.</td></tr>';return}
-  t.innerHTML=r.items.map(b=>'<tr data-id="'+b.id+'"><td class="t"><input type="text" value="'+esc(b.title)+'" maxlength="100"><div class="small">'+esc((b.start||'').replace('T',' ').slice(0,16))+' &middot; '+esc(b.status)+'</div></td>'+
+  t.innerHTML=r.items.map(b=>'<tr data-id="'+esc(b.id)+'"><td class="t"><input type="text" value="'+esc(b.title)+'" maxlength="100"><div class="small">'+esc((b.start||'').replace('T',' ').slice(0,16))+' &middot; '+esc(b.status)+'</div></td>'+
     '<td><select>'+Object.keys(PRIV).map(p=>'<option value="'+p+'"'+(p===b.privacy?' selected':'')+'>'+PRIV[p]+'</option>').join('')+'</select></td>'+
     '<td style="white-space:nowrap"><button class="pri" data-a="save">Save</button> <button data-a="copy">Copy link</button> <button data-a="open">Open</button> <button class="del" data-a="del">Delete</button></td></tr>').join('');
   t.querySelectorAll('button').forEach(btn=>btn.onclick=()=>{
